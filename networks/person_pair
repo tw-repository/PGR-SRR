@@ -1,0 +1,58 @@
+import torch
+import torch.nn as nn
+from timm import create_model
+
+
+SIZE = 512
+
+ViT_imagenet_person = create_model('vit_large_patch16_224', pretrained=False, num_classes=SIZE)
+ViT_imagenet_pair = create_model('vit_large_patch16_224', pretrained=False, num_classes=SIZE)
+ViT_dict = ViT_imagenet_person.state_dict()
+ViT_dict1 = ViT_imagenet_pair.state_dict()
+# xxx should be replaced, and you should download the large pre-trained ViT
+pretrained_model = torch.load(r'/xxx/jx_vit_large_p16_224-4ee7a4dc.pth')
+del pretrained_model['head.weight']
+del pretrained_model['head.bias']
+ViT_dict.update(pretrained_model)
+ViT_dict1.update(pretrained_model)
+ViT_imagenet_person.load_state_dict(ViT_dict)
+ViT_imagenet_pair.load_state_dict(ViT_dict1)
+print("---success load pretrain ViT---")
+
+
+class person_pair(nn.Module):
+    def __init__(self, num_classes=6):
+        super(person_pair, self).__init__()
+
+        self.person_a = ViT_imagenet_person
+        self.person_b = self.person_a
+        self.union = ViT_imagenet_pair
+
+        self.bboxes = nn.Linear(10, SIZE)
+
+        self.fc_fusion = nn.Linear(SIZE * 2, SIZE)
+        self.fc6 = nn.Sequential(nn.Linear(SIZE*4, SIZE),
+                                 nn.ReLU(inplace=True),
+                                 nn.Dropout())
+
+        self.fc7 = nn.Linear(SIZE, num_classes)
+
+    def forward(self, x1, x2, x3, x4):
+        x1 = self.union(x1)
+        x2 = self.person_a(x2)
+        x3 = self.person_b(x3)
+        x4 = self.bboxes(x4)
+
+        att_person = 0.5 * torch.mul(x2, x3)
+
+        high_features = torch.cat((att_person, x4), 1)
+        hLevel_feature = self.fc_fusion(high_features)
+
+        x = torch.cat((hLevel_feature, x1, x2, x3), 1)
+        fc6 = self.fc6(x)
+        x = self.fc7(fc6)
+
+        return x, fc6, x1, x2, x3, hLevel_feature
+
+
+
